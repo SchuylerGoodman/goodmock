@@ -1,14 +1,20 @@
 import inspect
 
-from goodmock.methodmockdata import MethodMockData
-from goodmock.mockstate import MockState
+
+from goodmock.context.mockcontext import MockContext
+from goodmock.event.setupstateevent import SetupStateEventArgs, SetupStateEventHandler
+from goodmock.event.verifystateevent import VerifyStateEventArgs, VerifyStateEventHandler
 from goodmock.setup import Setup
-from goodmock.returns import Returns
-from typing import Callable, Dict, Generic, Type, TypeVar
+from goodmock.state.callmockstate import CallMockState
+from goodmock.state.setupmockstate import SetupMockState
+from goodmock.state.verifymockstate import VerifyMockState
+from typing import Callable, Generic, Type, TypeVar
+
 
 TMock = TypeVar('TMock')
 TReturn = TypeVar('TReturn')
-TMockedMethod = TypeVar('TMockedMethod')
+TMockedMethod = TypeVar('TMockedMethod', bound=Callable)
+
 
 class Mock(Generic[TMock]):
     """
@@ -20,38 +26,23 @@ class Mock(Generic[TMock]):
     """
 
     def __init__(self, mockedtype : Type[TMock]) -> None:
-        self._mockedtype = mockedtype
         self._object : TMock = None
-        self._currentsetup = None
-        self._state : MockState = MockState.RESET
-        self._methoddata : Dict[str, MethodMockData] = {}
-        self._timescalled : int = 0
-        self._verified : bool = False
+        self._context : MockContext = MockContext(mockedtype)
+        self._context.state = CallMockState()
 
     def setup(self, mock_expr : Callable[[TMock], TReturn]) -> Setup:
-        self._state = MockState.SETUP
+        setupstateeventargs = SetupStateEventArgs(None)
+        self._context.state = SetupMockState(SetupStateEventHandler(setupstateeventargs))
         mock_expr(self.object)
 
-        if self._currentsetup is None:
-            raise Exception('The setup failed to initialize')
-        
-        setup = self._currentsetup
-        self._currentsetup = None
-
-        self._state = MockState.RESET
-
-        return setup
+        return setupstateeventargs.setup
 
     def verify(self, mock_expr : Callable[[TMock], TReturn], timescalled : int = 1) -> bool:
-        self._state = MockState.VERIFY
-        self._timescalled = timescalled
+        verifystateeventargs = VerifyStateEventArgs(False)
+        self._context.state = VerifyMockState(timescalled, VerifyStateEventHandler(verifystateeventargs))
         mock_expr(self.object)
-        self._timescalled = 0
-        verified = self._verified
-        self._verified = False
-        self._state = MockState.RESET
 
-        return verified
+        return verifystateeventargs.verified
 
     @property
     def object(self) -> TMock:
@@ -71,29 +62,13 @@ class Mock(Generic[TMock]):
 
         def mockedmethod(*args, **kwargs):
             ba = sig.bind(*args, **kwargs)
-            methodhash = f'{method}_{Mock._hasharguments(ba, omitself=True)}'
-
-            if self._state.insetup():
-                self._currentsetup = Setup(self._mockedtype, sig.return_annotation, method, ba.arguments)
-                methoddata = MethodMockData(self._currentsetup)
-                self._methoddata[methodhash] = methoddata
-            elif self._state.inverify():
-                self._verified = self._timescalled == self._methoddata[methodhash].calls
-            elif methodhash in self._methoddata: #these arguments have a registered return value
-                self._methoddata[methodhash].call()
-                setup = self._methoddata[methodhash].setup
-                if isinstance(setup, Returns):
-                    return setup.returnvalue
-            else:
-                raise Exception(f'This method has not been set up. Call Mock({self._mockedtype.__name__}).Setup(lambda mockobject: mockobject.{method.__name__}(...))')
-
-            return
+            return self._context.state.do(method, ba.arguments, sig.return_annotation, self._context)
 
         return mockedmethod
 
     def _makemock(self) -> TMock:
         mockedmethods = {}
-        for method in inspect.getmembers(self._mockedtype):
+        for method in inspect.getmembers(self._context.mockedtype):
             if (inspect.isfunction(method[1])):
                 mockmethod = None
                 if method[0] == '__init__':
@@ -103,7 +78,7 @@ class Mock(Generic[TMock]):
 
                 mockedmethods[method[0]] = mockmethod
 
-        mocktype = type(f'mock_{self._mockedtype.__name__}', (self._mockedtype, ), mockedmethods)
+        mocktype = type(f'mock_{self._context.mockedtype.__name__}', (self._context.mockedtype, ), mockedmethods)
         return object.__new__(mocktype)
 
     

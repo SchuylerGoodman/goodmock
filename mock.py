@@ -1,97 +1,64 @@
 import inspect
 
 
-from goodmock.context.mockcontext import MockContext
-from goodmock.event.setupstateevent import SetupStateEventArgs, SetupStateEventHandler
-from goodmock.event.verifystateevent import VerifyStateEventArgs, VerifyStateEventHandler
-from goodmock.setup import Setup
-from goodmock.state.callmockstate import CallMockState
-from goodmock.state.setupmockstate import SetupMockState
-from goodmock.state.verifymockstate import VerifyMockState
-from typing import Callable, Generic, Type, TypeVar
+from goodmock.methodmock import _MethodMock
+from goodmock.methodmockcontext import _MethodMockContext
+from goodmock.mocktype import _MockType
+from goodmock.when import _When
+from goodmock.whencontext import _WhenContext
+from types import new_class
+from typing import Callable, ParamSpec, Type, TypeVar, Union
 
 
 TMock = TypeVar('TMock')
+Params = ParamSpec('Params')
 TReturn = TypeVar('TReturn')
-TMockedMethod = TypeVar('TMockedMethod', bound=Callable)
 
 
-class Mock(Generic[TMock]):
-    """
-    mock_class = Mock(A)
-    mock_class.setup(lambda a : a.do3(1)).returns(2)
-    ...
-    output = mock_class.object.do3(input_value)
-    assert output == 2
-    """
+class Mock:
+    @classmethod
+    def when(cls, method : _MethodMock[Params, TReturn]) -> _When[Params, TReturn]:
+        if not isinstance(method, _MethodMock):
+            raise Exception(f'Input method must be bound to a mock instance. Try instantiating a mock with classmock = Mock.of(ClassType) and then mocking a method call with Mock.when(classmock.{method.__name__}).')
 
-    def __init__(self, mockedtype : Type[TMock]) -> None:
-        self._object : TMock = None
-        self._context : MockContext = MockContext(mockedtype)
-        self._context.state = CallMockState()
+        return method.when
 
-    def setup(self, mock_expr : Callable[[TMock], TReturn]) -> Setup:
-        setupstateeventargs = SetupStateEventArgs(None)
-        self._context.state = SetupMockState(SetupStateEventHandler(setupstateeventargs))
-        mock_expr(self.object)
-
-        return setupstateeventargs.setup
-
-    def verify(self, mock_expr : Callable[[TMock], TReturn], timescalled : int = 1) -> bool:
-        verifystateeventargs = VerifyStateEventArgs(False)
-        self._context.state = VerifyMockState(timescalled, VerifyStateEventHandler(verifystateeventargs))
-        mock_expr(self.object)
-
-        return verifystateeventargs.verified
-
-    @property
-    def object(self) -> TMock:
-        if self._object is None:
-            self._object = self._makemock()
-
-        return self._object
-
-    def _makeinit(self) -> None:
-        def mockedinit(self):
-            raise Exception('Cannot call __init__ on mock')
-
-        return mockedinit
-
-    def _makemockedmethod(self, method : TMockedMethod) -> TMockedMethod:
-        sig = inspect.signature(method)
-
-        def mockedmethod(*args, **kwargs):
-            ba = sig.bind(*args, **kwargs)
-            return self._context.state.do(method, ba.arguments, sig.return_annotation, self._context)
-
-        return mockedmethod
-
-    def _makemock(self) -> TMock:
-        mockedmethods = {}
-        for method in inspect.getmembers(self._context.mockedtype):
-            if (inspect.isfunction(method[1])):
-                mockmethod = None
-                if method[0] == '__init__':
-                    mockmethod = self._makeinit()
+    @classmethod
+    def of(cls, mockedtype : Type[TMock]) -> TMock:
+        mockedmembers = {}
+        for membername, member in inspect.getmembers(mockedtype):
+            if (inspect.isfunction(member)):
+                if membername == '__init__':
+                    member = Mock.__makenoopmock(member)
                 else:
-                    mockmethod = self._makemockedmethod(method[1])
+                    member = Mock.__makemockedmethod(member)
 
-                mockedmethods[method[0]] = mockmethod
+            mockedmembers[membername] = member
 
-        mocktype = type(f'mock_{self._context.mockedtype.__name__}', (self._context.mockedtype, ), mockedmethods)
-        return object.__new__(mocktype)
+        mocktype : Union[_MockType, mockedtype] = new_class(
+            f'mock_{mockedtype.__name__}',
+            (_MockType, mockedtype, ),
+            exec_body=lambda ns : ns.update(mockedmembers))
 
-    
+        mock = object.__new__(mocktype)
+        mock.when = None
+
+        return mock
+
     @staticmethod
-    def _hasharguments(arguments : inspect.BoundArguments, omitself : bool = True) -> str:
-        keys = []
-        for (key, value) in arguments.arguments.items():
-            if omitself and key == 'self':
-                continue
+    def __makenoopmock(method : Callable[Params, TReturn]) -> Callable[Params, TReturn]:
+        def noopmock(*args : Params.args, **kwargs : Params.kwargs) -> TReturn:
+            raise Exception(f'Cannot call method {method.__name__} on mock')
 
-            keys.append(key)
-            keys.append(str(value))
+        return noopmock
 
-        hash = '_'.join(keys)
+    @staticmethod
+    def __makemockedmethod(method : Callable[Params, TReturn]) -> Callable[Params, TReturn]:
+        methodname = method.__name__
+        signature = inspect.signature(method)
+        parameterswithoutself = [ param for param in signature.parameters.values() if param.name != 'self' ]
+        signature = signature.replace(parameters=parameterswithoutself)
+        when = _When(_WhenContext(methodname, signature))
+        context = _MethodMockContext(method, methodname, signature, when)
 
-        return hash
+        return _MethodMock(context)

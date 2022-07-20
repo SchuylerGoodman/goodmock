@@ -6,8 +6,11 @@ build-backend = "setuptools.build_meta"
 name = "goodmock"
 description = "A good mock library for python"
 readme = "README.md"
+license = { file="LICENSE" }
 version = "0.0.1"
-author = Schuyler Goodman
+authors = [
+    { name="Schuyler Goodman", email="schuyler.goodman@gmail.com" }
+]
 url = "https://github.com/SchuylerGoodman/goodmock"
 keywords = "mock, unit test"
 classifiers = [

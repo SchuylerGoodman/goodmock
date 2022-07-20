@@ -6,6 +6,7 @@ jobs:
   build-n-publish:
     name: Build and publish goodmock to PyPI and TestPyPI
     runs-on: ubuntu-latest
+    environment: production
 
     steps:
     - uses: actions/checkout@master

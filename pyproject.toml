@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools", "setuptools-scm"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "goodmock"
+description = "A good mock library for python"
+readme = "README.md"
+version = "0.0.1"
+author = Schuyler Goodman
+url = "https://github.com/SchuylerGoodman/goodmock"
+keywords = "mock, unit test"
+classifiers = [
+    "Programming Language :: Python :: 3.10",
+    "License :: OSI Approved :: Apache Software License"
+]
+requires-python = ">=3.10"

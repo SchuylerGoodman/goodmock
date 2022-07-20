@@ -1,8 +1,9 @@
 name: Publish goodmock to PyPI and TestPyPI
 
-on: push
-  branches:    
-    - 'Main'
+on:
+  push:
+    branches:    
+      - 'Main'
 
 jobs:
   build-n-publish:
